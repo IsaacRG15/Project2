@@ -43,7 +43,9 @@ const VIEW_TITLES_ES = {
   // Reportes
   rep_itinerario: "Reporte: Itinerario público",
   rep_abordaje: "Reporte: Lista de abordaje",
+  rep_gestion: "Reporte: Gestión operativa de vuelos",
   rep_flota: "Reporte: Control de flota",
+  rep_ingresos: "Reporte: Análisis de ingresos",
 };
 
 const COL_ES = {
@@ -59,7 +61,7 @@ const COL_ES = {
   model: "Modelo",
   range: "Alcance",
 
-  // flights (algunas columnas comunes del esquema)
+  // flights
   flight_id: "ID vuelo",
   flight_no: "No. vuelo",
   scheduled_departure: "Salida programada",
@@ -87,6 +89,17 @@ const COL_ES = {
 
   // boarding_passes
   boarding_no: "No. de abordaje",
+
+  // Extras reportes
+  departure_city: "Ciudad salida",
+  departure_airport_name: "Aeropuerto salida (nombre)",
+  arrival_city: "Ciudad llegada",
+  arrival_airport_name: "Aeropuerto llegada (nombre)",
+  aircraft_model: "Modelo aeronave",
+  total_seats: "Total de asientos",
+  fecha_compra: "Fecha compra",
+  total_reservas: "Total reservas",
+  ingresos_totales: "Ingresos totales",
 };
 
 function colLabel(key) {
@@ -105,7 +118,6 @@ function smartCell(value, { clamp = 2 } = {}) {
       </span>
     );
   }
-  // fechas ISO largas => muéstralas amigables
   if (typeof value === "string" && value.includes("T") && value.includes("Z")) {
     const d = new Date(value);
     if (!isNaN(d.getTime())) return d.toLocaleString();
@@ -116,7 +128,6 @@ function smartCell(value, { clamp = 2 } = {}) {
 /** Auto-hide mensajes */
 function useAutoHide(value, setValue, ms = 2500) {
   const t = useRef(null);
-
   useEffect(() => {
     if (!value) return;
     if (t.current) clearTimeout(t.current);
@@ -125,15 +136,56 @@ function useAutoHide(value, setValue, ms = 2500) {
   }, [value, setValue, ms]);
 }
 
+/**
+ * ✅ Lee respuesta de error del backend:
+ * - Si es JSON: { success:false, error:"...", db:{code,constraint,detail,...} }
+ * - Si es texto: lo devuelve tal cual
+ */
+async function readApiError(res) {
+  const ct = (res.headers.get("content-type") || "").toLowerCase();
+  if (ct.includes("application/json")) {
+    const j = await res.json().catch(() => null);
+    if (!j) return `Error HTTP ${res.status}`;
+    return formatDbError(j);
+  }
+  const t = await res.text().catch(() => "");
+  return t || `Error HTTP ${res.status}`;
+}
+
+/**
+ * ✅ Formatea bonito el error de BD (constraint, code, detail)
+ * Muestra primero el nombre de la restricción cuando existe.
+ */
+function formatDbError(payload) {
+  // payload puede venir como {error, db:{...}} del backend
+  const base = payload?.error || payload?.message || "Error en la operación";
+  const db = payload?.db || payload; // por si algún día mandas directo db
+
+  const parts = [];
+
+  // Primera línea "bonita"
+  if (db?.constraint) parts.push(`${db.constraint}`);
+  else if (db?.code) parts.push(`Código SQL: ${db.code}`);
+
+  // Mensaje principal
+  parts.push(base);
+
+  // Detalles opcionales (muy útiles en FK/UNIQUE)
+  if (db?.detail) parts.push(`Detalle: ${db.detail}`);
+  if (db?.table) parts.push(`Tabla: ${db.table}`);
+  if (db?.column) parts.push(`Columna: ${db.column}`);
+
+  return parts.filter(Boolean).join("\n");
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState("dashboard");
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  // ✅ auto-hide success + error
   useAutoHide(success, setSuccess, 2300);
-  useAutoHide(error, setError, 3500);
+  useAutoHide(error, setError, 4500);
 
   if (!user) return <Login onLogin={setUser} onError={setError} error={error} />;
 
@@ -141,26 +193,20 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-slate-100 font-sans text-slate-700 overflow-hidden">
-      {/* CSS extra: scrollbar + line clamp */}
       <style>{`
-        /* scrollbar (Chrome/Edge) */
         .nice-scroll::-webkit-scrollbar{ width: 10px; height: 10px; }
         .nice-scroll::-webkit-scrollbar-track{ background: transparent; }
         .nice-scroll::-webkit-scrollbar-thumb{ background: #cbd5e1; border-radius: 999px; border: 2px solid #f1f5f9; }
         .nice-scroll::-webkit-scrollbar-thumb:hover{ background: #94a3b8; }
-
-        /* line clamp fallback */
-        .line-clamp-2{
-          display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
-        }
-        .line-clamp-3{
-          display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
-        }
+        .line-clamp-2{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+        .line-clamp-3{ display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+        /* Animación suave */
+        .animate-fade-in{ animation: fadeIn .25s ease-out; }
+        @keyframes fadeIn { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:translateY(0)} }
       `}</style>
 
       {/* TOP NAV */}
       <header className="h-20 border-b border-slate-200 flex items-center gap-6 px-6 bg-white/90 backdrop-blur-sm z-20">
-        {/* Logo */}
         <div className="flex items-center gap-4 min-w-max">
           <div className="leading-tight">
             <h1 className="font-extrabold text-slate-900 text-base tracking-wider">
@@ -172,7 +218,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Título / estado */}
         <div className="hidden xl:block min-w-max">
           <h2 className="text-lg font-black text-slate-900 tracking-wide flex items-center gap-2">
             <span className="w-1 h-5 bg-sky-500 rounded-full mr-2"></span>
@@ -181,7 +226,6 @@ export default function App() {
           <p className="text-xs text-slate-500 ml-5 font-mono">CONEXIÓN SEGURA ESTABLECIDA</p>
         </div>
 
-        {/* NAV HORIZONTAL */}
         <nav className="flex-1 overflow-x-auto nice-scroll pr-2">
           <div className="flex items-center gap-3 min-w-max">
             <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mr-1">
@@ -215,16 +259,21 @@ export default function App() {
             </span>
             <TopNavBtn icon={<Map size={16} />} label="Itinerario" active={view === "rep_itinerario"} onClick={() => setView("rep_itinerario")} />
             <TopNavBtn icon={<Users size={16} />} label="Abordaje" active={view === "rep_abordaje"} onClick={() => setView("rep_abordaje")} />
+            <TopNavBtn icon={<Plane size={16} />} label="Gestión vuelos" active={view === "rep_gestion"} onClick={() => setView("rep_gestion")} />
             <TopNavBtn icon={<Plane size={16} className="-rotate-45" />} label="Control flota" active={view === "rep_flota"} onClick={() => setView("rep_flota")} />
+            <TopNavBtn icon={<Activity size={16} />} label="Ingresos" active={view === "rep_ingresos"} onClick={() => setView("rep_ingresos")} />
           </div>
         </nav>
 
-        {/* Usuario + desconectar */}
         <div className="flex items-center gap-3 min-w-max">
           <div className="hidden lg:flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
             <div
               className={`w-3 h-3 rounded-full shadow-[0_0_10px]
-              ${user.role && user.role.includes("admin") ? "bg-red-500 shadow-red-500/30" : "bg-emerald-500 shadow-emerald-500/30"}`}
+              ${
+                user.role && user.role.includes("admin")
+                  ? "bg-red-500 shadow-red-500/30"
+                  : "bg-emerald-500 shadow-emerald-500/30"
+              }`}
             />
             <div className="leading-tight max-w-[180px]">
               <p className="text-sm font-black text-slate-900 truncate">{user.name}</p>
@@ -248,18 +297,25 @@ export default function App() {
             <div className="pointer-events-auto bg-white border-l-4 border-red-500 p-4 shadow-2xl rounded-r-lg flex items-start gap-3 backdrop-blur-md animate-fade-in ring-1 ring-red-200">
               <AlertTriangle className="text-red-500 shrink-0 mt-1" />
               <div className="flex-1">
-                <h4 className="font-extrabold text-red-700 text-sm tracking-wide">ERROR DEL SISTEMA</h4>
-                <p className="text-xs text-red-700/80 mt-1 font-mono break-words">{String(error)}</p>
+                <h4 className="font-extrabold text-red-700 text-sm tracking-wide">
+                  ERROR DEL SISTEMA
+                </h4>
+                <pre className="text-xs text-red-700/80 mt-1 font-mono whitespace-pre-wrap break-words">
+                  {String(error)}
+                </pre>
               </div>
               <button onClick={() => setError(null)}>
                 <X size={16} className="text-red-400 hover:text-red-700" />
               </button>
             </div>
           )}
+
           {success && (
             <div className="pointer-events-auto bg-white border-l-4 border-emerald-500 p-4 shadow-2xl rounded-r-lg flex items-center gap-3 backdrop-blur-md animate-fade-in ring-1 ring-emerald-200">
               <Shield className="text-emerald-600" />
-              <p className="text-sm font-extrabold text-emerald-700 tracking-wide">{success}</p>
+              <p className="text-sm font-extrabold text-emerald-700 tracking-wide">
+                {success}
+              </p>
               <button className="ml-auto" onClick={() => setSuccess(null)}>
                 <X size={16} className="text-emerald-300 hover:text-emerald-700" />
               </button>
@@ -268,14 +324,11 @@ export default function App() {
         </div>
       </header>
 
-      {/* WORKSPACE CONTENT */}
-      {/* ✅ scroll bonito: padding, scrollbar, que no quede pegado */}
       <main className="flex-1 overflow-auto p-8 pr-10 nice-scroll relative scroll-smooth">
         <div className="max-w-7xl mx-auto space-y-8 animate-fade-in pb-14">
           {view === "dashboard" && <Dashboard user={user} onError={setError} />}
 
           {/* ================== CATÁLOGOS ================== */}
-
           {view === "airports" && (
             <CrudTable
               title="Catálogo de Aeropuertos"
@@ -287,17 +340,25 @@ export default function App() {
               pk="airport_code"
               formFields={[
                 { name: "airport_code", label: "Código aeropuerto (3 letras)", placeholder: "MEX" },
-                { name: "airport_name", label: "Nombre aeropuerto (texto o JSON)", placeholder: 'Ej. "AICM" o {"es":"AICM"}' },
-                { name: "city", label: "Ciudad (texto o JSON)", placeholder: 'Ej. "CDMX" o {"es":"CDMX"}' },
-                { name: "coordinates", label: "Coordenadas (JSON)", placeholder: '{"x":-99.072,"y":19.436}' },
+
+                // Backend: solo actualiza timezone, por eso se bloquean al editar
+                { name: "airport_name", label: "Nombre aeropuerto (texto o JSON)", placeholder: 'Ej. "AICM" o {"es":"AICM"}', disableOnEdit: true },
+                { name: "city", label: "Ciudad (texto o JSON)", placeholder: 'Ej. "CDMX" o {"es":"CDMX"}', disableOnEdit: true },
+                { name: "coordinates", label: "Coordenadas (JSON)", placeholder: '{"x":-99.072,"y":19.436}', disableOnEdit: true },
+
                 { name: "timezone", label: "Zona horaria", placeholder: "America/Mexico_City" },
               ]}
-              // ✅ tabla wide + JSON más compacto
               tableLayout="wide"
               jsonFields={["airport_name", "city", "coordinates"]}
-              // endpoints especiales del backend
               buildPutUrl={(id) => `${API_URL}/airports/${encodeURIComponent(id)}/timezone`}
               mapPutBody={(form) => ({ timezone: form.timezone })}
+              mapPostBody={(form) => ({
+                airport_code: form.airport_code,
+                airport_name: parseMaybeJson(form.airport_name) ?? form.airport_name,
+                city: parseMaybeJson(form.city) ?? form.city,
+                coordinates: parseMaybeJson(form.coordinates),
+                timezone: form.timezone,
+              })}
               buildDeleteUrl={(id) => `${API_URL}/airports/${encodeURIComponent(id)}`}
             />
           )}
@@ -319,13 +380,19 @@ export default function App() {
               jsonFields={["model"]}
               buildPutUrl={(id) => `${API_URL}/aircrafts/${encodeURIComponent(id)}/range`}
               mapPutBody={(form) => ({ new_range: Number(form.range) })}
+              mapPostBody={(form) => ({
+                aircraft_code: form.aircraft_code,
+                model: parseMaybeJson(form.model) ?? form.model,
+                range: Number(form.range),
+              })}
               buildDeleteUrl={(id) => `${API_URL}/aircrafts/${encodeURIComponent(id)}`}
             />
           )}
 
+          {/* ✅ VUELOS: edición (requiere PUT en backend) */}
           {view === "flights" && (
             <CrudTable
-              title="Vuelos (Lectura + Borrar)"
+              title="Vuelos (Editar + Borrar)"
               endpoint="flights"
               user={user}
               onError={setError}
@@ -336,6 +403,8 @@ export default function App() {
                 "scheduled_departure",
                 "scheduled_arrival",
                 "status",
+                "actual_departure",
+                "actual_arrival",
                 "departure_airport",
                 "arrival_airport",
                 "aircraft_code",
@@ -343,31 +412,43 @@ export default function App() {
               pk="flight_id"
               formFields={[
                 { name: "flight_id", label: "ID vuelo", placeholder: "12345" },
+                { name: "status", label: "Estatus", placeholder: "Scheduled / On Time / Delayed / Departed / Arrived / Cancelled" },
+                { name: "actual_departure", label: "Salida real (ISO o vacío)", placeholder: "2026-02-04T12:30:00Z" },
+                { name: "actual_arrival", label: "Llegada real (ISO o vacío)", placeholder: "2026-02-04T14:10:00Z" },
               ]}
-              // normalmente flights no lo editas aquí (si tu backend no tiene PUT/POST)
               disableCreate
-              disableEdit
+              buildPutUrl={(id) => `${API_URL}/flights/${encodeURIComponent(id)}`}
+              mapPutBody={(form) => ({
+                status: form.status,
+                actual_departure: emptyToNull(form.actual_departure),
+                actual_arrival: emptyToNull(form.actual_arrival),
+              })}
               buildDeleteUrl={(id) => `${API_URL}/flights/${encodeURIComponent(id)}`}
               tableLayout="wide"
             />
           )}
 
+          {/* ✅ ASIENTOS: edición (requiere PUT en backend) */}
           {view === "seats" && (
             <CrudTable
-              title="Asientos (Lectura + Borrar)"
+              title="Asientos (Editar + Borrar)"
               endpoint="seats"
               user={user}
               onError={setError}
               onSuccess={setSuccess}
               columns={["aircraft_code", "seat_no", "fare_conditions"]}
-              // PK compuesta: usamos un id virtual
               pkComposite={(row) => `${row.aircraft_code}__${row.seat_no}`}
               formFields={[
                 { name: "aircraft_code", label: "Código aeronave", placeholder: "320" },
                 { name: "seat_no", label: "Asiento", placeholder: "12A" },
+                { name: "fare_conditions", label: "Clase", placeholder: "Economy / Comfort / Business" },
               ]}
               disableCreate
-              disableEdit
+              buildPutUrl={(id) => {
+                const [aircraft_code, seat_no] = String(id).split("__");
+                return `${API_URL}/seats/${encodeURIComponent(aircraft_code)}/${encodeURIComponent(seat_no)}`;
+              }}
+              mapPutBody={(form) => ({ fare_conditions: form.fare_conditions })}
               buildDeleteUrlFromRow={(row) =>
                 `${API_URL}/seats/${encodeURIComponent(row.aircraft_code)}/${encodeURIComponent(row.seat_no)}`
               }
@@ -376,7 +457,6 @@ export default function App() {
           )}
 
           {/* ================== OPERACIONES ================== */}
-
           {view === "bookings" && (
             <CrudTable
               title="Gestión de Reservas"
@@ -392,6 +472,10 @@ export default function App() {
               ]}
               buildPutUrl={(id) => `${API_URL}/bookings/${encodeURIComponent(id)}`}
               mapPutBody={(form) => ({ total_amount: Number(form.total_amount) })}
+              mapPostBody={(form) => ({
+                book_ref: form.book_ref,
+                total_amount: Number(form.total_amount),
+              })}
               buildDeleteUrl={(id) => `${API_URL}/bookings/${encodeURIComponent(id)}`}
             />
           )}
@@ -422,7 +506,10 @@ export default function App() {
                 contact_data: parseMaybeJson(form.contact_data),
               })}
               mapPostBody={(form) => ({
-                ...form,
+                ticket_no: form.ticket_no,
+                book_ref: form.book_ref,
+                passenger_id: form.passenger_id,
+                passenger_name: form.passenger_name,
                 contact_data: parseMaybeJson(form.contact_data),
               })}
               tableLayout="wide"
@@ -479,7 +566,11 @@ function TopNavBtn({ icon, label, active, onClick }) {
       className={`
         flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-extrabold
         whitespace-nowrap transition-all duration-300 border
-        ${active ? "bg-sky-50 text-sky-700 border-sky-200" : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-slate-100 hover:border-slate-200"}
+        ${
+          active
+            ? "bg-sky-50 text-sky-700 border-sky-200"
+            : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-slate-100 hover:border-slate-200"
+        }
       `}
     >
       <span className={active ? "text-sky-600" : ""}>{icon}</span>
@@ -523,16 +614,22 @@ function Login({ onLogin, onError, error }) {
       <div className="w-full max-w-md">
         <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
           <div className="p-6 border-b border-slate-100 text-center">
-            <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Iniciar sesión</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
+              Iniciar sesión
+            </p>
             <h2 className="mt-2 text-2xl font-black text-slate-900">
               Bienvenido a <span className="text-sky-600">AEROSYS</span>
             </h2>
-            <p className="mt-1 text-sm text-slate-500">Ingresa tus credenciales para acceder al sistema</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Ingresa tus credenciales para acceder al sistema
+            </p>
           </div>
 
           <form onSubmit={handleSubmit} className="p-6 space-y-5">
             <div>
-              <label className="text-xs font-bold uppercase tracking-widest text-slate-600">Usuario</label>
+              <label className="text-xs font-bold uppercase tracking-widest text-slate-600">
+                Usuario
+              </label>
               <div className="mt-2 flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 focus-within:ring-2 focus-within:ring-sky-200">
                 <User size={18} className="text-slate-400" />
                 <input
@@ -546,7 +643,9 @@ function Login({ onLogin, onError, error }) {
             </div>
 
             <div>
-              <label className="text-xs font-bold uppercase tracking-widest text-slate-600">Contraseña</label>
+              <label className="text-xs font-bold uppercase tracking-widest text-slate-600">
+                Contraseña
+              </label>
               <div className="mt-2 flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 focus-within:ring-2 focus-within:ring-sky-200">
                 <Shield size={18} className="text-slate-400" />
                 <input
@@ -584,12 +683,17 @@ function Login({ onLogin, onError, error }) {
             </button>
 
             <div className="text-center text-xs text-slate-500">
-              Conectado a <span className="font-mono text-slate-700">{API_URL.replace("http://", "")}</span>
+              Conectado a{" "}
+              <span className="font-mono text-slate-700">
+                {API_URL.replace("http://", "")}
+              </span>
             </div>
           </form>
         </div>
 
-        <p className="mt-6 text-center text-xs text-slate-400">© {new Date().getFullYear()} AEROSYS</p>
+        <p className="mt-6 text-center text-xs text-slate-400">
+          © {new Date().getFullYear()} AEROSYS
+        </p>
       </div>
     </div>
   );
@@ -601,7 +705,10 @@ function Dashboard({ user }) {
 
   useEffect(() => {
     fetch(`${API_URL}/stats`, { headers: { "x-role": user.role } })
-      .then((r) => (r.ok ? r.json() : Promise.reject("Acceso restringido")))
+      .then(async (r) => {
+        if (!r.ok) throw await readApiError(r);
+        return r.json();
+      })
       .then(setStats)
       .catch(() => {});
   }, [user.role]);
@@ -611,7 +718,8 @@ function Dashboard({ user }) {
       <div className="mb-8 border-b border-slate-200 pb-4">
         <h3 className="text-3xl font-black text-slate-900">Centro de Comando</h3>
         <p className="text-slate-500 mt-1">
-          Resumen en tiempo real para <span className="text-sky-700 font-bold">{user.name}</span>
+          Resumen en tiempo real para{" "}
+          <span className="text-sky-700 font-bold">{user.name}</span>
         </p>
       </div>
 
@@ -620,11 +728,7 @@ function Dashboard({ user }) {
           <StatCard title="Total de reservas" value={stats.bookings} icon={<CreditCard />} />
           <StatCard title="Vuelos activos" value={stats.flights} icon={<Plane className="-rotate-45" />} />
           <StatCard title="Pasajeros" value={stats.passengers} icon={<Users />} />
-          <StatCard
-            title="Ingresos"
-            value={`$${Number(stats.income || 0).toLocaleString()}`}
-            icon={<Activity />}
-          />
+          <StatCard title="Ingresos" value={`$${Number(stats.income || 0).toLocaleString()}`} icon={<Activity />} />
         </div>
       ) : (
         <div className="bg-white border border-slate-200 p-8 rounded-2xl flex flex-col items-center justify-center text-center">
@@ -641,11 +745,10 @@ function Dashboard({ user }) {
 
 /**
  * CrudTable GENÉRICA:
- * - botones Editar / Eliminar siempre
- * - soporte: pk normal o pkComposite(row)
- * - soporte: endpoints especiales: buildPutUrl, mapPutBody, buildDeleteUrl, buildDeleteUrlFromRow
- * - soporte: disableCreate/disableEdit
- * - soporte: tableLayout="wide" => scroll horizontal + columnas grandes
+ * - soporte pk normal o pkComposite(row)
+ * - soporte: buildPutUrl, mapPutBody, buildDeleteUrl, buildDeleteUrlFromRow
+ * - campo f.disableOnEdit: deshabilita ese input cuando estás editando
+ * - ✅ ahora usa readApiError() para mostrar mensajes de BD
  */
 function CrudTable({
   title,
@@ -655,10 +758,10 @@ function CrudTable({
   onSuccess,
   columns,
   pk,
-  pkComposite, // (row)=>string
+  pkComposite,
   formFields,
   jsonFields = [],
-  tableLayout = "normal", // "normal" | "wide"
+  tableLayout = "normal",
   disableCreate = false,
   disableEdit = false,
 
@@ -679,7 +782,7 @@ function CrudTable({
 
   const load = async () => {
     const r = await fetch(`${API_URL}/${endpoint}`, { headers: { "x-role": user.role } });
-    if (!r.ok) throw await r.text();
+    if (!r.ok) throw await readApiError(r);
     setData(await r.json());
   };
 
@@ -703,7 +806,6 @@ function CrudTable({
   const openEdit = (row) => {
     const next = {};
     formFields.forEach((f) => (next[f.name] = row[f.name] ?? ""));
-    // si campos json, los mostramos como string bonito
     jsonFields.forEach((jf) => {
       if (next[jf] && typeof next[jf] === "object") next[jf] = JSON.stringify(next[jf]);
     });
@@ -719,7 +821,6 @@ function CrudTable({
     if (!canWrite) return onError("No tienes permisos para realizar esta acción.");
 
     try {
-      // POST/PUT url
       const url = isEditing
         ? buildPutUrl
           ? buildPutUrl(editId)
@@ -733,8 +834,8 @@ function CrudTable({
           ? mapPutBody(form)
           : form
         : mapPostBody
-          ? mapPostBody(form)
-          : form;
+        ? mapPostBody(form)
+        : form;
 
       const res = await fetch(url, {
         method,
@@ -742,7 +843,7 @@ function CrudTable({
         body: JSON.stringify(body),
       });
 
-      if (!res.ok) throw await res.text();
+      if (!res.ok) throw await readApiError(res);
 
       onSuccess(isEditing ? "Cambios guardados" : "Guardado correctamente");
       setForm({});
@@ -759,21 +860,22 @@ function CrudTable({
     if (!canWrite) return onError("No tienes permisos para realizar esta acción.");
     const id = getRowId(row);
 
+    // eslint-disable-next-line no-restricted-globals
     if (!confirm("¿Confirmas eliminar este registro? Esta acción no se puede deshacer.")) return;
 
     try {
       const url = buildDeleteUrlFromRow
         ? buildDeleteUrlFromRow(row)
         : buildDeleteUrl
-          ? buildDeleteUrl(id)
-          : `${API_URL}/${endpoint}/${encodeURIComponent(id)}`;
+        ? buildDeleteUrl(id)
+        : `${API_URL}/${endpoint}/${encodeURIComponent(id)}`;
 
       const res = await fetch(url, {
         method: "DELETE",
         headers: { "x-role": user.role },
       });
 
-      if (!res.ok) throw await res.text();
+      if (!res.ok) throw await readApiError(res);
 
       onSuccess("Registro eliminado");
       await load();
@@ -784,10 +886,7 @@ function CrudTable({
 
   const isPkField = (name) => name === pk;
 
-  const tableWrapperClass =
-    tableLayout === "wide"
-      ? "overflow-x-auto nice-scroll"
-      : "overflow-x-auto nice-scroll";
+  const tableWrapperClass = "overflow-x-auto nice-scroll";
 
   return (
     <div className="space-y-6">
@@ -827,14 +926,21 @@ function CrudTable({
                 <label className="block text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mb-2">
                   {f.label}
                 </label>
+
                 <input
                   className="w-full bg-slate-50 border border-slate-200 text-slate-900 p-3 rounded-xl focus:ring-2 focus:ring-sky-200 focus:border-sky-400 outline-none transition-all placeholder:text-slate-400 disabled:opacity-60"
                   type={f.type || "text"}
                   placeholder={f.placeholder}
                   value={form[f.name] ?? ""}
-                  disabled={(isEditing && isPkField(f.name)) || !canWrite || (isEditing && disableEdit)}
+                  disabled={
+                    (isEditing && isPkField(f.name)) ||
+                    !canWrite ||
+                    (isEditing && disableEdit) ||
+                    (isEditing && !!f.disableOnEdit)
+                  }
                   onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}
                 />
+
                 {jsonFields.includes(f.name) && (
                   <p className="mt-2 text-[11px] text-slate-500">
                     Tip: puedes pegar JSON. Ej: {"{ \"es\": \"Texto\" }"}
@@ -948,28 +1054,58 @@ function CrudTable({
   );
 }
 
+/* ReportView (5 reportes + loading real + sin resultados) */
 function ReportView({ view, user, onError }) {
-  const [data, setData] = useState([]);
-  const viewMap = { rep_itinerario: "itinerario", rep_abordaje: "abordaje", rep_flota: "flota" };
+  const [data, setData] = useState(null);
+
+  const viewMap = useMemo(
+    () => ({
+      rep_itinerario: "itinerario",
+      rep_abordaje: "abordaje",
+      rep_gestion: "gestion",
+      rep_flota: "flota",
+      rep_ingresos: "ingresos",
+    }),
+    []
+  );
 
   useEffect(() => {
     let ignore = false;
-    setData([]);
-    fetch(`${API_URL}/reports/${viewMap[view]}`, { headers: { "x-role": user.role } })
+
+    const key = viewMap[view];
+    if (!key) {
+      setData([]);
+      return;
+    }
+
+    setData(null);
+
+    fetch(`${API_URL}/reports/${key}`, { headers: { "x-role": user.role } })
       .then(async (r) => {
-        if (!r.ok) throw await r.text();
+        if (!r.ok) throw await readApiError(r);
         return r.json();
       })
-      .then((newData) => !ignore && setData(newData))
+      .then((newData) => !ignore && setData(Array.isArray(newData) ? newData : []))
       .catch((err) => !ignore && onError(err));
-    return () => (ignore = true);
-  }, [view, user.role, onError]);
 
-  if (data.length === 0) {
+    return () => (ignore = true);
+  }, [view, user.role, onError, viewMap]);
+
+  if (data === null) {
     return (
       <div className="flex flex-col items-center justify-center p-20 text-slate-500 bg-white rounded-2xl border border-slate-200 border-dashed">
         <Activity className="animate-pulse mb-4" size={32} />
         <p className="font-mono text-sm uppercase">Cargando datos...</p>
+      </div>
+    );
+  }
+
+  if (data.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center p-16 text-slate-500 bg-white rounded-2xl border border-slate-200 border-dashed">
+        <Database className="mb-3" size={28} />
+        <p className="font-mono text-sm uppercase">Sin resultados</p>
+        <p className="text-xs text-slate-400 mt-2">La vista no devolvió registros.</p>
       </div>
     );
   }
@@ -992,7 +1128,10 @@ function ReportView({ view, user, onError }) {
             {data.map((row, i) => (
               <tr key={i} className="hover:bg-slate-50 transition-colors">
                 {Object.entries(row).map(([k, v]) => (
-                  <td key={k} className="p-4 whitespace-nowrap text-slate-700 border-r border-slate-100 last:border-0 font-mono text-xs">
+                  <td
+                    key={k}
+                    className="p-4 whitespace-nowrap text-slate-700 border-r border-slate-100 last:border-0 font-mono text-xs"
+                  >
                     {typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}
                   </td>
                 ))}
@@ -1027,8 +1166,14 @@ function parseMaybeJson(v) {
     try {
       return JSON.parse(s);
     } catch {
-      return v; // si está mal, lo manda como string
+      return v;
     }
   }
   return v;
+}
+
+function emptyToNull(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  return s ? s : null;
 }
