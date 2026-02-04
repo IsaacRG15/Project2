@@ -1,336 +1,948 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Plane, Calendar, User, CreditCard, FileText, AlertTriangle, 
-  LogOut, Shield, Database, Plus, Trash2, X, Users, Activity, Map, Settings
-} from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Plane,
+  User,
+  CreditCard,
+  FileText,
+  AlertTriangle,
+  LogOut,
+  Shield,
+  Database,
+  Plus,
+  Trash2,
+  X,
+  Users,
+  Activity,
+  Map,
+  Save,
+  Pencil,
+  MapPin,
+  Armchair,
+} from "lucide-react";
 
 // --- CONFIGURACIÓN API ---
-const API_URL = 'http://localhost:3001/api';
+const API_URL = "http://localhost:3001/api";
+
+/** =========================
+ *  DICCIONARIOS ES -> Labels
+ *  ========================= */
+const VIEW_TITLES_ES = {
+  dashboard: "Panel",
+
+  // Catálogos
+  airports: "Aeropuertos",
+  aircrafts: "Aeronaves",
+  flights: "Vuelos",
+  seats: "Asientos",
+
+  // Operaciones
+  bookings: "Reservas",
+  tickets: "Boletos",
+  boarding: "Pases de abordar",
+
+  // Reportes
+  rep_itinerario: "Reporte: Itinerario público",
+  rep_abordaje: "Reporte: Lista de abordaje",
+  rep_flota: "Reporte: Control de flota",
+};
+
+const COL_ES = {
+  // airports
+  airport_code: "Código aeropuerto",
+  airport_name: "Nombre aeropuerto",
+  city: "Ciudad",
+  coordinates: "Coordenadas",
+  timezone: "Zona horaria",
+
+  // aircrafts
+  aircraft_code: "Código aeronave",
+  model: "Modelo",
+  range: "Alcance",
+
+  // flights (algunas columnas comunes del esquema)
+  flight_id: "ID vuelo",
+  flight_no: "No. vuelo",
+  scheduled_departure: "Salida programada",
+  scheduled_arrival: "Llegada programada",
+  actual_departure: "Salida real",
+  actual_arrival: "Llegada real",
+  departure_airport: "Aeropuerto salida",
+  arrival_airport: "Aeropuerto llegada",
+  status: "Estatus",
+
+  // seats
+  seat_no: "Asiento",
+  fare_conditions: "Clase",
+
+  // bookings
+  book_ref: "Referencia",
+  book_date: "Fecha de reserva",
+  total_amount: "Importe total",
+
+  // tickets
+  ticket_no: "No. de boleto",
+  passenger_id: "ID pasajero",
+  passenger_name: "Nombre del pasajero",
+  contact_data: "Contacto",
+
+  // boarding_passes
+  boarding_no: "No. de abordaje",
+};
+
+function colLabel(key) {
+  if (COL_ES[key]) return COL_ES[key];
+  return String(key).replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+/** Render “bonito” para JSON/objects y textos largos */
+function smartCell(value, { clamp = 2 } = {}) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    const txt = JSON.stringify(value);
+    return (
+      <span className={`block text-xs font-mono text-slate-700 break-words line-clamp-${clamp}`}>
+        {txt}
+      </span>
+    );
+  }
+  // fechas ISO largas => muéstralas amigables
+  if (typeof value === "string" && value.includes("T") && value.includes("Z")) {
+    const d = new Date(value);
+    if (!isNaN(d.getTime())) return d.toLocaleString();
+  }
+  return String(value);
+}
+
+/** Auto-hide mensajes */
+function useAutoHide(value, setValue, ms = 2500) {
+  const t = useRef(null);
+
+  useEffect(() => {
+    if (!value) return;
+    if (t.current) clearTimeout(t.current);
+    t.current = setTimeout(() => setValue(null), ms);
+    return () => t.current && clearTimeout(t.current);
+  }, [value, setValue, ms]);
+}
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [view, setView] = useState('dashboard');
+  const [view, setView] = useState("dashboard");
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  // --- LOGIN ---
+  // ✅ auto-hide success + error
+  useAutoHide(success, setSuccess, 2300);
+  useAutoHide(error, setError, 3500);
+
   if (!user) return <Login onLogin={setUser} onError={setError} error={error} />;
 
+  const viewTitle = VIEW_TITLES_ES[view] || "Sistema";
+
   return (
-    <div className="flex h-screen bg-[#0B1120] font-sans text-slate-300 overflow-hidden bg-[url('https://www.transparenttextures.com/patterns/stardust.png')]">
-      {/* SIDEBAR - Estilo Cabina */}
-      <aside className="w-72 bg-slate-900/80 backdrop-blur-xl border-r border-slate-800 flex flex-col z-20 shadow-[4px_0_24px_rgba(0,0,0,0.5)]">
-        {/* Logo Area */}
-        <div className="p-8 border-b border-slate-800/50 flex items-center gap-4">
-          <div className="relative">
-            <div className="absolute inset-0 bg-sky-500 blur-lg opacity-40 rounded-full"></div>
-            <div className="bg-gradient-to-br from-sky-500 to-blue-700 p-3 rounded-xl text-white relative z-10 shadow-lg">
-              <Plane size={28} className="transform -rotate-45" />
-            </div>
-          </div>
-          <div>
-            <h1 className="font-bold text-white text-lg tracking-wider">AERO<span className="text-sky-400">SYS</span></h1>
-            <p className="text-[10px] text-sky-500/80 font-mono uppercase tracking-widest">Flight Control v2</p>
+    <div className="flex flex-col h-screen bg-slate-100 font-sans text-slate-700 overflow-hidden">
+      {/* CSS extra: scrollbar + line clamp */}
+      <style>{`
+        /* scrollbar (Chrome/Edge) */
+        .nice-scroll::-webkit-scrollbar{ width: 10px; height: 10px; }
+        .nice-scroll::-webkit-scrollbar-track{ background: transparent; }
+        .nice-scroll::-webkit-scrollbar-thumb{ background: #cbd5e1; border-radius: 999px; border: 2px solid #f1f5f9; }
+        .nice-scroll::-webkit-scrollbar-thumb:hover{ background: #94a3b8; }
+
+        /* line clamp fallback */
+        .line-clamp-2{
+          display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+        }
+        .line-clamp-3{
+          display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+        }
+      `}</style>
+
+      {/* TOP NAV */}
+      <header className="h-20 border-b border-slate-200 flex items-center gap-6 px-6 bg-white/90 backdrop-blur-sm z-20">
+        {/* Logo */}
+        <div className="flex items-center gap-4 min-w-max">
+          <div className="leading-tight">
+            <h1 className="font-extrabold text-slate-900 text-base tracking-wider">
+              AERO<span className="text-sky-600">SYS</span>
+            </h1>
+            <p className="text-[10px] text-slate-500 font-mono uppercase tracking-widest">
+              Control de vuelos v2
+            </p>
           </div>
         </div>
-        
-        {/* Navigation */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
-          <MenuSection title="Main Control">
-            <MenuBtn icon={<Activity size={18}/>} label="Dashboard" active={view==='dashboard'} onClick={()=>setView('dashboard')}/>
-          </MenuSection>
 
-          <MenuSection title="Flight Ops (CRUD)">
-            <MenuBtn icon={<CreditCard size={18}/>} label="Bookings" active={view==='bookings'} onClick={()=>setView('bookings')}/>
-            <MenuBtn icon={<User size={18}/>} label="Tickets" active={view==='tickets'} onClick={()=>setView('tickets')}/>
-            <MenuBtn icon={<FileText size={18}/>} label="Boarding Passes" active={view==='boarding'} onClick={()=>setView('boarding')}/>
-          </MenuSection>
-
-          <MenuSection title="Intelligence (Views)">
-            <MenuBtn icon={<Map size={18}/>} label="Public Itinerary" active={view==='rep_itinerario'} onClick={()=>setView('rep_itinerario')}/>
-            <MenuBtn icon={<Users size={18}/>} label="Boarding List" active={view==='rep_abordaje'} onClick={()=>setView('rep_abordaje')}/>
-            <MenuBtn icon={<Plane size={18}/>} label="Fleet Control" active={view==='rep_flota'} onClick={()=>setView('rep_flota')}/>
-          </MenuSection>
+        {/* Título / estado */}
+        <div className="hidden xl:block min-w-max">
+          <h2 className="text-lg font-black text-slate-900 tracking-wide flex items-center gap-2">
+            <span className="w-1 h-5 bg-sky-500 rounded-full mr-2"></span>
+            {viewTitle}
+          </h2>
+          <p className="text-xs text-slate-500 ml-5 font-mono">CONEXIÓN SEGURA ESTABLECIDA</p>
         </div>
 
-        {/* User Profile Footer */}
-        <div className="p-6 bg-slate-900/90 border-t border-slate-800">
-          <div className="flex items-center gap-3 mb-4 bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
-            <div className={`w-3 h-3 rounded-full shadow-[0_0_10px] ${user.role && user.role.includes('admin') ? 'bg-red-500 shadow-red-500/50' : 'bg-emerald-500 shadow-emerald-500/50'}`}></div>
-            <div className="overflow-hidden">
-              <p className="text-sm font-bold text-white truncate">{user.name}</p>
-              <p className="text-[10px] text-slate-400 truncate uppercase tracking-wider">{user.role?.replace('rol_', '')}</p>
+        {/* NAV HORIZONTAL */}
+        <nav className="flex-1 overflow-x-auto nice-scroll pr-2">
+          <div className="flex items-center gap-3 min-w-max">
+            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mr-1">
+              Principal
+            </span>
+            <TopNavBtn icon={<Activity size={16} />} label="Panel" active={view === "dashboard"} onClick={() => setView("dashboard")} />
+
+            <div className="h-6 w-px bg-slate-200 mx-2" />
+
+            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mr-1">
+              Catálogos
+            </span>
+            <TopNavBtn icon={<MapPin size={16} />} label="Aeropuertos" active={view === "airports"} onClick={() => setView("airports")} />
+            <TopNavBtn icon={<Plane size={16} className="-rotate-45" />} label="Aeronaves" active={view === "aircrafts"} onClick={() => setView("aircrafts")} />
+            <TopNavBtn icon={<Plane size={16} />} label="Vuelos" active={view === "flights"} onClick={() => setView("flights")} />
+            <TopNavBtn icon={<Armchair size={16} />} label="Asientos" active={view === "seats"} onClick={() => setView("seats")} />
+
+            <div className="h-6 w-px bg-slate-200 mx-2" />
+
+            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mr-1">
+              Operaciones
+            </span>
+            <TopNavBtn icon={<CreditCard size={16} />} label="Reservas" active={view === "bookings"} onClick={() => setView("bookings")} />
+            <TopNavBtn icon={<User size={16} />} label="Boletos" active={view === "tickets"} onClick={() => setView("tickets")} />
+            <TopNavBtn icon={<FileText size={16} />} label="Pases" active={view === "boarding"} onClick={() => setView("boarding")} />
+
+            <div className="h-6 w-px bg-slate-200 mx-2" />
+
+            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mr-1">
+              Reportes
+            </span>
+            <TopNavBtn icon={<Map size={16} />} label="Itinerario" active={view === "rep_itinerario"} onClick={() => setView("rep_itinerario")} />
+            <TopNavBtn icon={<Users size={16} />} label="Abordaje" active={view === "rep_abordaje"} onClick={() => setView("rep_abordaje")} />
+            <TopNavBtn icon={<Plane size={16} className="-rotate-45" />} label="Control flota" active={view === "rep_flota"} onClick={() => setView("rep_flota")} />
+          </div>
+        </nav>
+
+        {/* Usuario + desconectar */}
+        <div className="flex items-center gap-3 min-w-max">
+          <div className="hidden lg:flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
+            <div
+              className={`w-3 h-3 rounded-full shadow-[0_0_10px]
+              ${user.role && user.role.includes("admin") ? "bg-red-500 shadow-red-500/30" : "bg-emerald-500 shadow-emerald-500/30"}`}
+            />
+            <div className="leading-tight max-w-[180px]">
+              <p className="text-sm font-black text-slate-900 truncate">{user.name}</p>
+              <p className="text-[10px] text-slate-500 truncate uppercase tracking-wider">
+                {user.role?.replace("rol_", "")}
+              </p>
             </div>
           </div>
-          <button onClick={()=>setUser(null)} className="w-full flex items-center justify-center gap-2 text-slate-400 hover:text-white hover:bg-red-500/20 py-2.5 rounded-lg transition-all text-xs font-bold border border-transparent hover:border-red-500/30 group">
-            <LogOut size={14} className="group-hover:-translate-x-1 transition-transform"/> DISCONNECT
+
+          <button
+            onClick={() => setUser(null)}
+            className="flex items-center justify-center gap-2 text-slate-600 hover:text-slate-900 hover:bg-red-50 px-4 py-2 rounded-xl transition-all text-xs font-extrabold border border-slate-200 hover:border-red-200 group"
+          >
+            <LogOut size={14} className="group-hover:-translate-x-1 transition-transform" /> SALIR
           </button>
         </div>
-      </aside>
 
-      {/* MAIN CONTENT AREA */}
-      <main className="flex-1 flex flex-col overflow-hidden relative">
-        {/* Top Bar Glass */}
-        <header className="h-20 border-b border-slate-800/50 flex justify-between items-center px-8 bg-slate-900/50 backdrop-blur-sm z-10">
-          <div>
-            <h2 className="text-xl font-bold text-white tracking-wide flex items-center gap-2">
-              <span className="w-1 h-6 bg-sky-500 rounded-full mr-2"></span>
-              {view.replace('rep_', 'Report: ').toUpperCase()}
-            </h2>
-            <p className="text-xs text-slate-500 ml-5 font-mono">SECURE CONNECTION ESTABLISHED</p>
-          </div>
-          
-          {/* Notifications Area */}
-          <div className="fixed top-6 right-6 w-96 z-50 space-y-3 pointer-events-none">
-            {error && (
-              <div className="pointer-events-auto bg-red-950/90 border-l-4 border-red-500 p-4 shadow-2xl rounded-r-lg flex items-start gap-3 backdrop-blur-md animate-fade-in ring-1 ring-red-500/20">
-                <AlertTriangle className="text-red-500 shrink-0 mt-1 drop-shadow-lg"/>
-                <div className="flex-1">
-                  <h4 className="font-bold text-red-200 text-sm tracking-wide">SYSTEM ERROR</h4>
-                  <p className="text-xs text-red-300/80 mt-1 font-mono">{error}</p>
-                </div>
-                <button onClick={()=>setError(null)}><X size={16} className="text-red-400 hover:text-white"/></button>
+        {/* Notifications */}
+        <div className="fixed top-6 right-6 w-96 z-50 space-y-3 pointer-events-none">
+          {error && (
+            <div className="pointer-events-auto bg-white border-l-4 border-red-500 p-4 shadow-2xl rounded-r-lg flex items-start gap-3 backdrop-blur-md animate-fade-in ring-1 ring-red-200">
+              <AlertTriangle className="text-red-500 shrink-0 mt-1" />
+              <div className="flex-1">
+                <h4 className="font-extrabold text-red-700 text-sm tracking-wide">ERROR DEL SISTEMA</h4>
+                <p className="text-xs text-red-700/80 mt-1 font-mono break-words">{String(error)}</p>
               </div>
-            )}
-            {success && (
-              <div className="pointer-events-auto bg-emerald-950/90 border-l-4 border-emerald-500 p-4 shadow-2xl rounded-r-lg flex items-center gap-3 backdrop-blur-md animate-fade-in ring-1 ring-emerald-500/20">
-                <Shield className="text-emerald-500 drop-shadow-lg"/>
-                <p className="text-sm font-bold text-emerald-200 tracking-wide">{success}</p>
-              </div>
-            )}
-          </div>
-        </header>
+              <button onClick={() => setError(null)}>
+                <X size={16} className="text-red-400 hover:text-red-700" />
+              </button>
+            </div>
+          )}
+          {success && (
+            <div className="pointer-events-auto bg-white border-l-4 border-emerald-500 p-4 shadow-2xl rounded-r-lg flex items-center gap-3 backdrop-blur-md animate-fade-in ring-1 ring-emerald-200">
+              <Shield className="text-emerald-600" />
+              <p className="text-sm font-extrabold text-emerald-700 tracking-wide">{success}</p>
+              <button className="ml-auto" onClick={() => setSuccess(null)}>
+                <X size={16} className="text-emerald-300 hover:text-emerald-700" />
+              </button>
+            </div>
+          )}
+        </div>
+      </header>
 
-        {/* WORKSPACE CONTENT */}
-        <div className="flex-1 overflow-auto p-8 relative scroll-smooth">
-          <div className="max-w-7xl mx-auto space-y-8 animate-fade-in pb-10">
-            {view === 'dashboard' && <Dashboard user={user} onError={setError} />}
-            
-            {view === 'bookings' && <CrudTable title="Bookings Management" endpoint="bookings" user={user} onError={setError} onSuccess={setSuccess} 
-                columns={['book_ref', 'book_date', 'total_amount']} pk="book_ref"
-                formFields={[
-                  {name: 'book_ref', label: 'Ref Code (6 chars)', placeholder: 'XXXXXX'},
-                  {name: 'total_amount', label: 'Total Amount', type: 'number', placeholder: '-100 to test check'}
-                ]}
-            />}
-            {view === 'tickets' && <CrudTable title="Tickets Management" endpoint="tickets" user={user} onError={setError} onSuccess={setSuccess}
-                columns={['ticket_no', 'book_ref', 'passenger_name']} pk="ticket_no"
-                formFields={[
-                  {name: 'ticket_no', label: 'Ticket No (13 digits)', placeholder: '0005432000000'},
-                  {name: 'book_ref', label: 'Booking Ref'},
-                  {name: 'passenger_id', label: 'Passenger ID', placeholder: '1234 567890'},
-                  {name: 'passenger_name', label: 'Full Name', placeholder: 'juan perez'},
-                  {name: 'contact_data', label: 'Contact JSON', placeholder: '{"email": "test@test.com"}'}
-                ]}
-            />}
-            {view === 'boarding' && <CrudTable title="Boarding Passes" endpoint="boarding" user={user} onError={setError} onSuccess={setSuccess}
-                columns={['ticket_no', 'flight_id', 'boarding_no', 'seat_no']} pk="ticket_no"
-                formFields={[
-                  {name: 'ticket_no', label: 'Ticket No'},
-                  {name: 'flight_id', label: 'Flight ID'},
-                  {name: 'boarding_no', label: 'Boarding No'},
-                  {name: 'seat_no', label: 'Seat No', placeholder: '99Z'}
-                ]}
-            />}
-            
-            {view.startsWith('rep_') && <ReportView view={view} user={user} onError={setError} />}
-          </div>
+      {/* WORKSPACE CONTENT */}
+      {/* ✅ scroll bonito: padding, scrollbar, que no quede pegado */}
+      <main className="flex-1 overflow-auto p-8 pr-10 nice-scroll relative scroll-smooth">
+        <div className="max-w-7xl mx-auto space-y-8 animate-fade-in pb-14">
+          {view === "dashboard" && <Dashboard user={user} onError={setError} />}
+
+          {/* ================== CATÁLOGOS ================== */}
+
+          {view === "airports" && (
+            <CrudTable
+              title="Catálogo de Aeropuertos"
+              endpoint="airports"
+              user={user}
+              onError={setError}
+              onSuccess={setSuccess}
+              columns={["airport_code", "airport_name", "city", "coordinates", "timezone"]}
+              pk="airport_code"
+              formFields={[
+                { name: "airport_code", label: "Código aeropuerto (3 letras)", placeholder: "MEX" },
+                { name: "airport_name", label: "Nombre aeropuerto (texto o JSON)", placeholder: 'Ej. "AICM" o {"es":"AICM"}' },
+                { name: "city", label: "Ciudad (texto o JSON)", placeholder: 'Ej. "CDMX" o {"es":"CDMX"}' },
+                { name: "coordinates", label: "Coordenadas (JSON)", placeholder: '{"x":-99.072,"y":19.436}' },
+                { name: "timezone", label: "Zona horaria", placeholder: "America/Mexico_City" },
+              ]}
+              // ✅ tabla wide + JSON más compacto
+              tableLayout="wide"
+              jsonFields={["airport_name", "city", "coordinates"]}
+              // endpoints especiales del backend
+              buildPutUrl={(id) => `${API_URL}/airports/${encodeURIComponent(id)}/timezone`}
+              mapPutBody={(form) => ({ timezone: form.timezone })}
+              buildDeleteUrl={(id) => `${API_URL}/airports/${encodeURIComponent(id)}`}
+            />
+          )}
+
+          {view === "aircrafts" && (
+            <CrudTable
+              title="Catálogo de Aeronaves"
+              endpoint="aircrafts"
+              user={user}
+              onError={setError}
+              onSuccess={setSuccess}
+              columns={["aircraft_code", "model", "range"]}
+              pk="aircraft_code"
+              formFields={[
+                { name: "aircraft_code", label: "Código aeronave (3)", placeholder: "320" },
+                { name: "model", label: "Modelo (texto o JSON)", placeholder: 'Ej. "Airbus A320" o {"es":"A320"}' },
+                { name: "range", label: "Alcance (km)", type: "number", placeholder: "6100" },
+              ]}
+              jsonFields={["model"]}
+              buildPutUrl={(id) => `${API_URL}/aircrafts/${encodeURIComponent(id)}/range`}
+              mapPutBody={(form) => ({ new_range: Number(form.range) })}
+              buildDeleteUrl={(id) => `${API_URL}/aircrafts/${encodeURIComponent(id)}`}
+            />
+          )}
+
+          {view === "flights" && (
+            <CrudTable
+              title="Vuelos (Lectura + Borrar)"
+              endpoint="flights"
+              user={user}
+              onError={setError}
+              onSuccess={setSuccess}
+              columns={[
+                "flight_id",
+                "flight_no",
+                "scheduled_departure",
+                "scheduled_arrival",
+                "status",
+                "departure_airport",
+                "arrival_airport",
+                "aircraft_code",
+              ]}
+              pk="flight_id"
+              formFields={[
+                { name: "flight_id", label: "ID vuelo", placeholder: "12345" },
+              ]}
+              // normalmente flights no lo editas aquí (si tu backend no tiene PUT/POST)
+              disableCreate
+              disableEdit
+              buildDeleteUrl={(id) => `${API_URL}/flights/${encodeURIComponent(id)}`}
+              tableLayout="wide"
+            />
+          )}
+
+          {view === "seats" && (
+            <CrudTable
+              title="Asientos (Lectura + Borrar)"
+              endpoint="seats"
+              user={user}
+              onError={setError}
+              onSuccess={setSuccess}
+              columns={["aircraft_code", "seat_no", "fare_conditions"]}
+              // PK compuesta: usamos un id virtual
+              pkComposite={(row) => `${row.aircraft_code}__${row.seat_no}`}
+              formFields={[
+                { name: "aircraft_code", label: "Código aeronave", placeholder: "320" },
+                { name: "seat_no", label: "Asiento", placeholder: "12A" },
+              ]}
+              disableCreate
+              disableEdit
+              buildDeleteUrlFromRow={(row) =>
+                `${API_URL}/seats/${encodeURIComponent(row.aircraft_code)}/${encodeURIComponent(row.seat_no)}`
+              }
+              tableLayout="wide"
+            />
+          )}
+
+          {/* ================== OPERACIONES ================== */}
+
+          {view === "bookings" && (
+            <CrudTable
+              title="Gestión de Reservas"
+              endpoint="bookings"
+              user={user}
+              onError={setError}
+              onSuccess={setSuccess}
+              columns={["book_ref", "book_date", "total_amount"]}
+              pk="book_ref"
+              formFields={[
+                { name: "book_ref", label: "Referencia (6 caracteres)", placeholder: "XXXXXX" },
+                { name: "total_amount", label: "Importe total", type: "number", placeholder: "Ej. 1500" },
+              ]}
+              buildPutUrl={(id) => `${API_URL}/bookings/${encodeURIComponent(id)}`}
+              mapPutBody={(form) => ({ total_amount: Number(form.total_amount) })}
+              buildDeleteUrl={(id) => `${API_URL}/bookings/${encodeURIComponent(id)}`}
+            />
+          )}
+
+          {view === "tickets" && (
+            <CrudTable
+              title="Gestión de Boletos"
+              endpoint="tickets"
+              user={user}
+              onError={setError}
+              onSuccess={setSuccess}
+              columns={["ticket_no", "book_ref", "passenger_name", "passenger_id", "contact_data"]}
+              pk="ticket_no"
+              formFields={[
+                { name: "ticket_no", label: "No. de boleto (13 dígitos)", placeholder: "0005432000000" },
+                { name: "book_ref", label: "Referencia de reserva" },
+                { name: "passenger_id", label: "ID pasajero", placeholder: "1234 567890" },
+                { name: "passenger_name", label: "Nombre completo", placeholder: "Juan Pérez" },
+                { name: "contact_data", label: "Contacto (JSON)", placeholder: '{"email":"test@test.com"}' },
+              ]}
+              jsonFields={["contact_data"]}
+              buildPutUrl={(id) => `${API_URL}/tickets/${encodeURIComponent(id)}`}
+              buildDeleteUrl={(id) => `${API_URL}/tickets/${encodeURIComponent(id)}`}
+              mapPutBody={(form) => ({
+                book_ref: form.book_ref,
+                passenger_id: form.passenger_id,
+                passenger_name: form.passenger_name,
+                contact_data: parseMaybeJson(form.contact_data),
+              })}
+              mapPostBody={(form) => ({
+                ...form,
+                contact_data: parseMaybeJson(form.contact_data),
+              })}
+              tableLayout="wide"
+            />
+          )}
+
+          {view === "boarding" && (
+            <CrudTable
+              title="Pases de Abordar"
+              endpoint="boarding"
+              user={user}
+              onError={setError}
+              onSuccess={setSuccess}
+              columns={["ticket_no", "flight_id", "boarding_no", "seat_no"]}
+              pk="ticket_no"
+              formFields={[
+                { name: "ticket_no", label: "No. de boleto" },
+                { name: "flight_id", label: "ID vuelo" },
+                { name: "boarding_no", label: "No. de abordaje" },
+                { name: "seat_no", label: "Asiento", placeholder: "12A" },
+              ]}
+              buildPutUrl={(id) => `${API_URL}/boarding/${encodeURIComponent(id)}`}
+              buildDeleteUrl={(id) => `${API_URL}/boarding/${encodeURIComponent(id)}`}
+              mapPutBody={(form) => ({
+                flight_id: Number(form.flight_id),
+                boarding_no: Number(form.boarding_no),
+                seat_no: form.seat_no,
+              })}
+              mapPostBody={(form) => ({
+                ticket_no: form.ticket_no,
+                flight_id: Number(form.flight_id),
+                boarding_no: Number(form.boarding_no),
+                seat_no: form.seat_no,
+              })}
+            />
+          )}
+
+          {/* ================== REPORTES ================== */}
+          {view.startsWith("rep_") && <ReportView view={view} user={user} onError={setError} />}
         </div>
       </main>
     </div>
   );
 }
 
-// --- SUB-COMPONENTES (Dark Styled) ---
+/* =========================
+   COMPONENTES
+   ========================= */
 
+function TopNavBtn({ icon, label, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`
+        flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-extrabold
+        whitespace-nowrap transition-all duration-300 border
+        ${active ? "bg-sky-50 text-sky-700 border-sky-200" : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-slate-100 hover:border-slate-200"}
+      `}
+    >
+      <span className={active ? "text-sky-600" : ""}>{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+}
+
+// --- LOGIN ---
 function Login({ onLogin, onError, error }) {
-  const [form, setForm] = useState({ username: '', password: '' });
+  const [form, setForm] = useState({ username: "", password: "" });
+  const [loading, setLoading] = useState(false);
+  const [showPwd, setShowPwd] = useState(false);
+
+  const setField = (k, v) => {
+    setForm((s) => ({ ...s, [k]: v }));
+    if (error) onError(null);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
     try {
       const res = await fetch(`${API_URL}/login`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form)
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
       });
       const data = await res.json();
       if (data.success) onLogin(data.user);
-      else onError(data.error);
-    } catch (e) { onError("Connection failed"); }
+      else onError(data.error || "Credenciales inválidas");
+    } catch {
+      onError("Falló la conexión");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-[#050B14] flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Abstract Background Elements */}
-      <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-[#050B14] to-[#000000]"></div>
-      <div className="absolute top-[-20%] right-[-10%] w-[500px] h-[500px] bg-sky-900/20 rounded-full blur-[100px]"></div>
-      <div className="absolute bottom-[-20%] left-[-10%] w-[500px] h-[500px] bg-blue-900/10 rounded-full blur-[100px]"></div>
+    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6">
+      <div className="w-full max-w-md">
+        <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
+          <div className="p-6 border-b border-slate-100 text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Iniciar sesión</p>
+            <h2 className="mt-2 text-2xl font-black text-slate-900">
+              Bienvenido a <span className="text-sky-600">AEROSYS</span>
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">Ingresa tus credenciales para acceder al sistema</p>
+          </div>
 
-      <div className="bg-slate-900/40 w-full max-w-md rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.6)] p-10 border border-slate-800 backdrop-blur-xl relative z-10">
-        <div className="text-center mb-10">
-          <div className="bg-gradient-to-br from-sky-500 to-blue-700 w-20 h-20 rounded-2xl flex items-center justify-center mx-auto text-white mb-6 shadow-xl shadow-sky-900/50 transform hover:scale-105 transition-transform duration-500">
-            <Plane size={40} className="transform -rotate-45" />
-          </div>
-          <h2 className="text-3xl font-bold text-white tracking-tight">AERO<span className="text-sky-500">SYS</span></h2>
-          <p className="text-slate-400 text-sm mt-2 font-light">Secure Flight Management System</p>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-1">
-            <label className="text-xs text-sky-500 font-bold uppercase tracking-widest ml-1">Username</label>
-            <input className="w-full bg-slate-950/50 border border-slate-700 text-slate-200 p-3.5 rounded-lg focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 outline-none transition-all placeholder:text-slate-700" 
-              placeholder="e.g. usuario_admin" value={form.username} onChange={e=>setForm({...form, username:e.target.value})}/>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs text-sky-500 font-bold uppercase tracking-widest ml-1">Password</label>
-            <input className="w-full bg-slate-950/50 border border-slate-700 text-slate-200 p-3.5 rounded-lg focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 outline-none transition-all placeholder:text-slate-700" 
-              type="password" placeholder="••••••••" value={form.password} onChange={e=>setForm({...form, password:e.target.value})}/>
-          </div>
-          
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm flex items-center gap-2">
-              <AlertTriangle size={16}/> {error}
+          <form onSubmit={handleSubmit} className="p-6 space-y-5">
+            <div>
+              <label className="text-xs font-bold uppercase tracking-widest text-slate-600">Usuario</label>
+              <div className="mt-2 flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 focus-within:ring-2 focus-within:ring-sky-200">
+                <User size={18} className="text-slate-400" />
+                <input
+                  className="w-full h-11 bg-transparent outline-none text-sm text-slate-900 placeholder:text-slate-400"
+                  placeholder="usuario_admin"
+                  value={form.username}
+                  onChange={(e) => setField("username", e.target.value)}
+                  autoFocus
+                />
+              </div>
             </div>
-          )}
-          
-          <button className="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-4 rounded-lg transition-all shadow-lg shadow-sky-900/30 active:scale-95 uppercase tracking-wider text-sm">
-            Authenticate
-          </button>
-        </form>
+
+            <div>
+              <label className="text-xs font-bold uppercase tracking-widest text-slate-600">Contraseña</label>
+              <div className="mt-2 flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 focus-within:ring-2 focus-within:ring-sky-200">
+                <Shield size={18} className="text-slate-400" />
+                <input
+                  className="w-full h-11 bg-transparent outline-none text-sm text-slate-900 placeholder:text-slate-400"
+                  type={showPwd ? "text" : "password"}
+                  placeholder="••••••••"
+                  value={form.password}
+                  onChange={(e) => setField("password", e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPwd((s) => !s)}
+                  className="text-xs font-bold text-slate-500 hover:text-slate-700"
+                >
+                  {showPwd ? "Ocultar" : "Ver"}
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 flex items-center gap-2">
+                <AlertTriangle size={16} />
+                {String(error)}
+              </div>
+            )}
+
+            <button
+              disabled={loading}
+              className="w-full h-12 rounded-2xl font-extrabold text-sm tracking-wider
+                         bg-gradient-to-r from-sky-600 to-indigo-600 text-white
+                         hover:opacity-95 transition active:scale-[0.99]
+                         disabled:opacity-60 disabled:cursor-not-allowed shadow-lg"
+            >
+              {loading ? "Validando..." : "Entrar"}
+            </button>
+
+            <div className="text-center text-xs text-slate-500">
+              Conectado a <span className="font-mono text-slate-700">{API_URL.replace("http://", "")}</span>
+            </div>
+          </form>
+        </div>
+
+        <p className="mt-6 text-center text-xs text-slate-400">© {new Date().getFullYear()} AEROSYS</p>
       </div>
     </div>
   );
 }
 
-function Dashboard({ user, onError }) {
+/** Dashboard */
+function Dashboard({ user }) {
   const [stats, setStats] = useState(null);
+
   useEffect(() => {
-    fetch(`${API_URL}/stats`, { headers: { 'x-role': user.role } })
-      .then(r => r.ok ? r.json() : Promise.reject("Access Restricted"))
+    fetch(`${API_URL}/stats`, { headers: { "x-role": user.role } })
+      .then((r) => (r.ok ? r.json() : Promise.reject("Acceso restringido")))
       .then(setStats)
       .catch(() => {});
-  }, []);
+  }, [user.role]);
 
   return (
     <div>
-      <div className="mb-8 border-b border-slate-800 pb-4">
-        <h3 className="text-3xl font-bold text-white">Command Center</h3>
-        <p className="text-slate-500 mt-1">Real-time data overview for <span className="text-sky-400">{user.name}</span></p>
+      <div className="mb-8 border-b border-slate-200 pb-4">
+        <h3 className="text-3xl font-black text-slate-900">Centro de Comando</h3>
+        <p className="text-slate-500 mt-1">
+          Resumen en tiempo real para <span className="text-sky-700 font-bold">{user.name}</span>
+        </p>
       </div>
-      
+
       {stats ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <StatCard title="Total Bookings" value={stats.bookings} icon={<CreditCard/>} color="from-blue-600 to-blue-400" />
-          <StatCard title="Active Flights" value={stats.flights} icon={<Plane className="-rotate-45"/>} color="from-emerald-600 to-emerald-400" />
-          <StatCard title="Passengers" value={stats.passengers} icon={<Users/>} color="from-violet-600 to-violet-400" />
-          <StatCard title="Revenue" value={`$${parseFloat(stats.income).toLocaleString()}`} icon={<Activity/>} color="from-amber-600 to-amber-400" />
+          <StatCard title="Total de reservas" value={stats.bookings} icon={<CreditCard />} />
+          <StatCard title="Vuelos activos" value={stats.flights} icon={<Plane className="-rotate-45" />} />
+          <StatCard title="Pasajeros" value={stats.passengers} icon={<Users />} />
+          <StatCard
+            title="Ingresos"
+            value={`$${Number(stats.income || 0).toLocaleString()}`}
+            icon={<Activity />}
+          />
         </div>
       ) : (
-        <div className="bg-slate-900/50 border border-slate-700 p-8 rounded-2xl flex flex-col items-center justify-center text-center opacity-75">
-          <Shield size={48} className="text-slate-600 mb-4"/>
-          <h4 className="text-xl font-bold text-slate-300">Restricted Access</h4>
-          <p className="text-slate-500 mt-2 max-w-md">Your clearance level ({user.role}) does not allow viewing global statistics.</p>
+        <div className="bg-white border border-slate-200 p-8 rounded-2xl flex flex-col items-center justify-center text-center">
+          <Shield size={48} className="text-slate-300 mb-4" />
+          <h4 className="text-xl font-black text-slate-900">Acceso restringido</h4>
+          <p className="text-slate-500 mt-2 max-w-md">
+            Tu nivel de permisos ({user.role}) no permite ver estadísticas globales.
+          </p>
         </div>
       )}
     </div>
   );
 }
 
-function CrudTable({ title, endpoint, user, onError, onSuccess, columns, pk, formFields }) {
+/**
+ * CrudTable GENÉRICA:
+ * - botones Editar / Eliminar siempre
+ * - soporte: pk normal o pkComposite(row)
+ * - soporte: endpoints especiales: buildPutUrl, mapPutBody, buildDeleteUrl, buildDeleteUrlFromRow
+ * - soporte: disableCreate/disableEdit
+ * - soporte: tableLayout="wide" => scroll horizontal + columnas grandes
+ */
+function CrudTable({
+  title,
+  endpoint,
+  user,
+  onError,
+  onSuccess,
+  columns,
+  pk,
+  pkComposite, // (row)=>string
+  formFields,
+  jsonFields = [],
+  tableLayout = "normal", // "normal" | "wide"
+  disableCreate = false,
+  disableEdit = false,
+
+  buildPutUrl,
+  mapPutBody,
+  mapPostBody,
+  buildDeleteUrl,
+  buildDeleteUrlFromRow,
+}) {
   const [data, setData] = useState([]);
   const [form, setForm] = useState({});
   const [showForm, setShowForm] = useState(false);
 
+  const [isEditing, setIsEditing] = useState(false);
+  const [editId, setEditId] = useState(null);
+
+  const canWrite = user.role !== "rol_consulta";
+
+  const load = async () => {
+    const r = await fetch(`${API_URL}/${endpoint}`, { headers: { "x-role": user.role } });
+    if (!r.ok) throw await r.text();
+    setData(await r.json());
+  };
+
   useEffect(() => {
     let ignore = false;
     setData([]);
-    fetch(`${API_URL}/${endpoint}`, { headers: { 'x-role': user.role } })
-      .then(async r => { if(!r.ok) throw await r.text(); return r.json(); })
-      .then(newData => { if (!ignore) setData(newData); })
-      .catch(err => { if (!ignore) onError(err); });
-    return () => { ignore = true; };
-  }, [endpoint]);
+    load().catch((err) => !ignore && onError(err));
+    return () => (ignore = true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endpoint, user.role]);
+
+  const getRowId = (row) => (pkComposite ? pkComposite(row) : row[pk]);
+
+  const openNew = () => {
+    setForm({});
+    setIsEditing(false);
+    setEditId(null);
+    setShowForm(true);
+  };
+
+  const openEdit = (row) => {
+    const next = {};
+    formFields.forEach((f) => (next[f.name] = row[f.name] ?? ""));
+    // si campos json, los mostramos como string bonito
+    jsonFields.forEach((jf) => {
+      if (next[jf] && typeof next[jf] === "object") next[jf] = JSON.stringify(next[jf]);
+    });
+
+    setForm(next);
+    setIsEditing(true);
+    setEditId(getRowId(row));
+    setShowForm(true);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!canWrite) return onError("No tienes permisos para realizar esta acción.");
+
     try {
-      const res = await fetch(`${API_URL}/${endpoint}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-role': user.role }, body: JSON.stringify(form)
+      // POST/PUT url
+      const url = isEditing
+        ? buildPutUrl
+          ? buildPutUrl(editId)
+          : `${API_URL}/${endpoint}/${encodeURIComponent(editId)}`
+        : `${API_URL}/${endpoint}`;
+
+      const method = isEditing ? "PUT" : "POST";
+
+      const body = isEditing
+        ? mapPutBody
+          ? mapPutBody(form)
+          : form
+        : mapPostBody
+          ? mapPostBody(form)
+          : form;
+
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json", "x-role": user.role },
+        body: JSON.stringify(body),
       });
+
       if (!res.ok) throw await res.text();
-      onSuccess("Transaction Recorded");
-      setForm({}); setShowForm(false);
-      const r = await fetch(`${API_URL}/${endpoint}`, { headers: { 'x-role': user.role } });
-      setData(await r.json());
-    } catch (e) { onError(e); }
+
+      onSuccess(isEditing ? "Cambios guardados" : "Guardado correctamente");
+      setForm({});
+      setShowForm(false);
+      setIsEditing(false);
+      setEditId(null);
+      await load();
+    } catch (err) {
+      onError(err);
+    }
   };
 
-  const handleDelete = async (id) => {
-    if(!confirm("CONFIRM DELETION? This action is irreversible.")) return;
+  const handleDelete = async (row) => {
+    if (!canWrite) return onError("No tienes permisos para realizar esta acción.");
+    const id = getRowId(row);
+
+    if (!confirm("¿Confirmas eliminar este registro? Esta acción no se puede deshacer.")) return;
+
     try {
-      const res = await fetch(`${API_URL}/${endpoint}/${id}`, { method: 'DELETE', headers: { 'x-role': user.role } });
+      const url = buildDeleteUrlFromRow
+        ? buildDeleteUrlFromRow(row)
+        : buildDeleteUrl
+          ? buildDeleteUrl(id)
+          : `${API_URL}/${endpoint}/${encodeURIComponent(id)}`;
+
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: { "x-role": user.role },
+      });
+
       if (!res.ok) throw await res.text();
-      onSuccess("Record Deleted");
-      const r = await fetch(`${API_URL}/${endpoint}`, { headers: { 'x-role': user.role } });
-      setData(await r.json());
-    } catch (e) { onError(e); }
+
+      onSuccess("Registro eliminado");
+      await load();
+    } catch (err) {
+      onError(err);
+    }
   };
+
+  const isPkField = (name) => name === pk;
+
+  const tableWrapperClass =
+    tableLayout === "wide"
+      ? "overflow-x-auto nice-scroll"
+      : "overflow-x-auto nice-scroll";
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center bg-slate-900/50 p-6 rounded-2xl border border-slate-800 backdrop-blur-sm">
-        <h3 className="font-bold text-xl text-white flex items-center gap-2">
-          <Database size={20} className="text-sky-500"/> {title}
+      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-200">
+        <h3 className="font-black text-xl text-slate-900 flex items-center gap-2">
+          <Database size={20} className="text-sky-600" /> {title}
         </h3>
-        <button onClick={() => setShowForm(!showForm)} className="bg-sky-600 hover:bg-sky-500 text-white px-5 py-2.5 rounded-lg flex items-center gap-2 text-sm font-bold shadow-lg shadow-sky-900/20 transition-all active:scale-95 border border-sky-500/50">
-          <Plus size={18}/> New Entry
+
+        <button
+          onClick={() => (showForm ? setShowForm(false) : openNew())}
+          disabled={!canWrite || disableCreate}
+          className={`px-5 py-2.5 rounded-xl flex items-center gap-2 text-sm font-extrabold shadow-lg transition-all active:scale-95
+            ${
+              canWrite && !disableCreate
+                ? "bg-sky-600 hover:bg-sky-700 text-white"
+                : "bg-slate-200 text-slate-500 cursor-not-allowed"
+            }`}
+          title={!canWrite || disableCreate ? "No disponible" : "Nuevo"}
+        >
+          <Plus size={18} /> Nuevo
         </button>
       </div>
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="bg-slate-900 p-8 rounded-2xl shadow-2xl border border-slate-700 animate-fade-in ring-1 ring-sky-500/20 relative overflow-hidden">
+        <form
+          onSubmit={handleSubmit}
+          className="bg-white p-8 rounded-2xl shadow-xl border border-slate-200 animate-fade-in relative overflow-hidden"
+        >
           <div className="absolute top-0 left-0 w-1 h-full bg-sky-500"></div>
-          <h4 className="font-bold mb-6 text-white text-lg border-b border-slate-800 pb-2">Record Details</h4>
-          <div className="grid grid-cols-2 gap-6 mb-8">
-            {formFields.map(f => (
-              <div key={f.name}>
-                <label className="block text-[10px] font-bold text-sky-500 uppercase tracking-widest mb-2">{f.label}</label>
-                <input className="w-full bg-slate-950 border border-slate-700 text-slate-200 p-3 rounded-lg focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none transition-all placeholder:text-slate-700" 
-                  type={f.type || 'text'} placeholder={f.placeholder}
-                  value={form[f.name] || ''} onChange={e=>setForm({...form, [f.name]:e.target.value})}
+          <h4 className="font-black mb-6 text-slate-900 text-lg border-b border-slate-100 pb-2">
+            {isEditing ? "Editar registro" : "Nuevo registro"}
+          </h4>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            {formFields.map((f) => (
+              <div key={f.name} className={f.full ? "md:col-span-2" : ""}>
+                <label className="block text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mb-2">
+                  {f.label}
+                </label>
+                <input
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-900 p-3 rounded-xl focus:ring-2 focus:ring-sky-200 focus:border-sky-400 outline-none transition-all placeholder:text-slate-400 disabled:opacity-60"
+                  type={f.type || "text"}
+                  placeholder={f.placeholder}
+                  value={form[f.name] ?? ""}
+                  disabled={(isEditing && isPkField(f.name)) || !canWrite || (isEditing && disableEdit)}
+                  onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}
                 />
+                {jsonFields.includes(f.name) && (
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    Tip: puedes pegar JSON. Ej: {"{ \"es\": \"Texto\" }"}
+                  </p>
+                )}
               </div>
             ))}
           </div>
+
           <div className="flex justify-end gap-3">
-            <button type="button" onClick={()=>setShowForm(false)} className="px-5 py-2.5 text-slate-400 hover:text-white transition-colors text-sm font-bold">Cancel</button>
-            <button className="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-2.5 rounded-lg font-bold shadow-lg transition-all flex items-center gap-2">
-              <Save size={18}/> Save Data
+            <button
+              type="button"
+              onClick={() => {
+                setShowForm(false);
+                setIsEditing(false);
+                setEditId(null);
+                setForm({});
+              }}
+              className="px-5 py-2.5 text-slate-600 hover:text-slate-900 transition-colors text-sm font-extrabold"
+            >
+              Cancelar
+            </button>
+
+            <button
+              disabled={!canWrite || (isEditing && disableEdit)}
+              className={`px-8 py-2.5 rounded-xl font-extrabold shadow-lg transition-all flex items-center gap-2
+                ${
+                  canWrite && !(isEditing && disableEdit)
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                    : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                }`}
+            >
+              <Save size={18} /> {isEditing ? "Guardar cambios" : "Guardar"}
             </button>
           </div>
         </form>
       )}
 
-      <div className="bg-slate-900/60 rounded-2xl shadow-xl border border-slate-800 overflow-hidden backdrop-blur-sm">
-        <table className="w-full text-sm text-left">
-          <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
-            <tr>
-              {columns.map(c => <th key={c} className="p-4 uppercase text-xs font-bold tracking-wider">{c.replace('_',' ')}</th>)}
-              <th className="p-4 text-right uppercase text-xs font-bold tracking-wider">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800/50">
-            {data.map((row, i) => (
-              <tr key={i} className="hover:bg-slate-800/50 transition-colors group">
-                {columns.map(c => (
-                  <td key={c} className="p-4 text-slate-300 font-medium group-hover:text-white transition-colors">
-                    {typeof row[c] === 'object' && row[c] !== null ? JSON.stringify(row[c]) : row[c]}
-                  </td>
+      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+        <div className={tableWrapperClass}>
+          <table className="w-full text-sm text-left min-w-[880px]">
+            <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+              <tr>
+                {columns.map((c) => (
+                  <th
+                    key={c}
+                    className={`p-4 uppercase text-xs font-extrabold tracking-wider whitespace-nowrap ${
+                      tableLayout === "wide" ? "min-w-[200px]" : ""
+                    }`}
+                  >
+                    {colLabel(c)}
+                  </th>
                 ))}
-                <td className="p-4 text-right">
-                  <button onClick={() => handleDelete(row[pk])} className="text-slate-500 hover:text-red-400 hover:bg-red-950/30 p-2 rounded-lg transition-all border border-transparent hover:border-red-900/50"><Trash2 size={16}/></button>
-                </td>
+                <th className="p-4 text-right uppercase text-xs font-extrabold tracking-wider whitespace-nowrap">
+                  Acciones
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+
+            <tbody className="divide-y divide-slate-100">
+              {data.map((row, i) => (
+                <tr key={i} className="hover:bg-slate-50 transition-colors group">
+                  {columns.map((c) => (
+                    <td key={c} className="p-4 text-slate-700 font-medium align-top">
+                      {smartCell(row[c], { clamp: tableLayout === "wide" ? 3 : 2 })}
+                    </td>
+                  ))}
+
+                  <td className="p-4 text-right whitespace-nowrap">
+                    <div className="inline-flex items-center gap-2">
+                      <button
+                        onClick={() => openEdit(row)}
+                        disabled={!canWrite || disableEdit}
+                        className={`p-2 rounded-lg transition-all border
+                          ${
+                            canWrite && !disableEdit
+                              ? "text-slate-400 hover:text-sky-700 hover:bg-sky-50 border-transparent hover:border-sky-200"
+                              : "text-slate-300 border-transparent cursor-not-allowed"
+                          }`}
+                        title={canWrite && !disableEdit ? "Editar" : "No disponible"}
+                      >
+                        <Pencil size={16} />
+                      </button>
+
+                      <button
+                        onClick={() => handleDelete(row)}
+                        disabled={!canWrite}
+                        className={`p-2 rounded-lg transition-all border
+                          ${
+                            canWrite
+                              ? "text-slate-400 hover:text-red-600 hover:bg-red-50 border-transparent hover:border-red-200"
+                              : "text-slate-300 border-transparent cursor-not-allowed"
+                          }`}
+                        title={canWrite ? "Eliminar" : "Solo lectura"}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {data.length === 0 && (
+            <div className="p-10 text-center text-slate-500">No hay registros para mostrar.</div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -338,39 +950,51 @@ function CrudTable({ title, endpoint, user, onError, onSuccess, columns, pk, for
 
 function ReportView({ view, user, onError }) {
   const [data, setData] = useState([]);
-  const viewMap = { 'rep_itinerario': 'itinerario', 'rep_abordaje': 'abordaje', 'rep_flota': 'flota' };
+  const viewMap = { rep_itinerario: "itinerario", rep_abordaje: "abordaje", rep_flota: "flota" };
 
   useEffect(() => {
     let ignore = false;
     setData([]);
-    fetch(`${API_URL}/reports/${viewMap[view]}`, { headers: { 'x-role': user.role } })
-      .then(async r => { if(!r.ok) throw await r.text(); return r.json(); })
-      .then(newData => { if (!ignore) setData(newData); })
-      .catch(err => { if (!ignore) onError(err); });
-    return () => { ignore = true; };
-  }, [view]);
+    fetch(`${API_URL}/reports/${viewMap[view]}`, { headers: { "x-role": user.role } })
+      .then(async (r) => {
+        if (!r.ok) throw await r.text();
+        return r.json();
+      })
+      .then((newData) => !ignore && setData(newData))
+      .catch((err) => !ignore && onError(err));
+    return () => (ignore = true);
+  }, [view, user.role, onError]);
 
-  if(data.length === 0) return (
-    <div className="flex flex-col items-center justify-center p-20 text-slate-600 bg-slate-900/30 rounded-2xl border border-slate-800 border-dashed">
-      <Activity className="animate-pulse mb-4" size={32}/>
-      <p className="font-mono text-sm uppercase">Acquiring Data Stream...</p>
-    </div>
-  );
+  if (data.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center p-20 text-slate-500 bg-white rounded-2xl border border-slate-200 border-dashed">
+        <Activity className="animate-pulse mb-4" size={32} />
+        <p className="font-mono text-sm uppercase">Cargando datos...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="bg-slate-900/60 rounded-2xl shadow-xl border border-slate-800 overflow-hidden backdrop-blur-sm">
-      <div className="overflow-x-auto custom-scrollbar">
-        <table className="w-full text-sm text-left">
-          <thead className="bg-slate-950 text-sky-500 border-b border-slate-800">
-            <tr>{Object.keys(data[0]).map(k => <th key={k} className="p-4 whitespace-nowrap uppercase text-xs font-bold tracking-wider">{k.replace(/_/g,' ')}</th>)}</tr>
+    <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+      <div className="overflow-x-auto nice-scroll">
+        <table className="w-full text-sm text-left min-w-[1000px]">
+          <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+            <tr>
+              {Object.keys(data[0]).map((k) => (
+                <th key={k} className="p-4 whitespace-nowrap uppercase text-xs font-extrabold tracking-wider">
+                  {colLabel(k)}
+                </th>
+              ))}
+            </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/50">
+
+          <tbody className="divide-y divide-slate-100">
             {data.map((row, i) => (
-              <tr key={i} className="hover:bg-slate-800/50 transition-colors">
-                {Object.values(row).map((v, j) => (
-                   <td key={j} className="p-4 whitespace-nowrap text-slate-400 border-r border-slate-800/30 last:border-0 font-mono text-xs">
-                     {typeof v === 'object' && v !== null ? JSON.stringify(v) : v}
-                   </td>
+              <tr key={i} className="hover:bg-slate-50 transition-colors">
+                {Object.entries(row).map(([k, v]) => (
+                  <td key={k} className="p-4 whitespace-nowrap text-slate-700 border-r border-slate-100 last:border-0 font-mono text-xs">
+                    {typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}
+                  </td>
                 ))}
               </tr>
             ))}
@@ -381,28 +1005,30 @@ function ReportView({ view, user, onError }) {
   );
 }
 
-// UI Helpers (Styled)
-function MenuSection({title, children}) { return <div className="mb-2"><h4 className="text-[10px] font-extrabold text-slate-600 uppercase px-4 mb-3 tracking-widest">{title}</h4><div className="space-y-1">{children}</div></div> }
-function MenuBtn({icon, label, active, onClick}) { 
+function StatCard({ title, value, icon }) {
   return (
-    <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 relative overflow-hidden group ${active ? 'bg-sky-600/10 text-sky-400 border border-sky-600/20' : 'text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent'}`}>
-      {active && <div className="absolute left-0 top-0 h-full w-1 bg-sky-500 shadow-[0_0_10px_#0ea5e9]"></div>}
-      <span className={`relative z-10 group-hover:scale-110 transition-transform duration-300 ${active ? 'text-sky-400' : ''}`}>{icon}</span> 
-      <span className="relative z-10">{label}</span>
-    </button> 
-  ) 
-}
-function StatCard({title, value, color, icon}) { 
-  return (
-    <div className="relative group overflow-hidden bg-slate-900 p-6 rounded-2xl border border-slate-800 hover:border-slate-600 transition-all duration-300 shadow-xl">
-      <div className={`absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity bg-gradient-to-br ${color} bg-clip-text text-transparent transform scale-150`}>
-        {React.cloneElement(icon, { size: 64 })}
-      </div>
-      <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${color} flex items-center justify-center text-white mb-4 shadow-lg`}>
+    <div className="relative group overflow-hidden bg-white p-6 rounded-2xl border border-slate-200 hover:border-slate-300 transition-all duration-300 shadow-sm">
+      <div className="w-12 h-12 rounded-xl bg-sky-50 flex items-center justify-center text-sky-700 mb-4 border border-sky-100">
         {icon}
       </div>
-      <p className="text-slate-400 text-xs uppercase font-bold tracking-wider">{title}</p>
-      <h3 className="text-2xl font-bold text-white mt-1 group-hover:translate-x-1 transition-transform">{value}</h3>
-    </div> 
-  ) 
+      <p className="text-slate-500 text-xs uppercase font-extrabold tracking-wider">{title}</p>
+      <h3 className="text-2xl font-black text-slate-900 mt-1">{value}</h3>
+    </div>
+  );
+}
+
+/** parsea JSON si viene como string JSON, si no, regresa string normal */
+function parseMaybeJson(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== "string") return v;
+  const s = v.trim();
+  if (!s) return null;
+  if ((s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"))) {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return v; // si está mal, lo manda como string
+    }
+  }
+  return v;
 }
