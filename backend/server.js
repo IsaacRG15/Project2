@@ -192,7 +192,8 @@ app.get("/api/refs/flights", async (req, res, next) => {
 // ==========================================
 // ✅ FLIGHTS (GET + PUT + DELETE)
 // ==========================================
-app.get("/api/flights", async (req, res, next) => {
+// -------- FLIGHTS (CRUD COMPLETO: GET + POST + PUT + DELETE) --------
+app.get("/api/flights", async (req, res) => {
   try {
     res.json(
       await db(
@@ -210,73 +211,88 @@ app.get("/api/flights", async (req, res, next) => {
           actual_departure,
           actual_arrival
         FROM bookings.flights
-        ORDER BY scheduled_departure DESC, flight_id DESC
+        ORDER BY scheduled_departure DESC
         LIMIT 200`
       )
     );
   } catch (e) {
-    next(e);
+    res.status(500).send(e.message);
   }
 });
 
-/**
- * ✅ PUT /api/flights/:flight_id
- * Actualiza SOLO:
- * - status
- * - actual_departure
- * - actual_arrival
- *
- * (Tu frontend manda ISO o vacío, aquí se convierte a timestamp)
- */
-app.put("/api/flights/:flight_id", async (req, res, next) => {
-  const { flight_id } = req.params;
-  const { status, actual_departure, actual_arrival } = req.body;
+// CREAR VUELO
+app.post("/api/flights", async (req, res) => {
+  const { 
+    flight_no, scheduled_departure, scheduled_arrival, 
+    departure_airport, arrival_airport, status, aircraft_code 
+  } = req.body;
 
   try {
-    const ad = parseIsoToDateOrNull(actual_departure, "actual_departure");
-    const aa = parseIsoToDateOrNull(actual_arrival, "actual_arrival");
+    const q = `
+      INSERT INTO bookings.flights 
+      (flight_no, scheduled_departure, scheduled_arrival, departure_airport, arrival_airport, status, aircraft_code)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `;
+    await db(req, res, q, [
+      flight_no, scheduled_departure, scheduled_arrival, 
+      departure_airport, arrival_airport, status, aircraft_code
+    ]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).send(e.message);
+  }
+});
 
+// EDITAR VUELO
+app.put("/api/flights/:flight_id", async (req, res) => {
+  const { flight_id } = req.params;
+  const { 
+    flight_no, scheduled_departure, scheduled_arrival, 
+    departure_airport, arrival_airport, status, aircraft_code 
+  } = req.body;
+
+  try {
     const q = `
       UPDATE bookings.flights
-      SET status = $1,
-          actual_departure = $2,
-          actual_arrival = $3
-      WHERE flight_id = $4
+      SET flight_no = $1,
+          scheduled_departure = $2,
+          scheduled_arrival = $3,
+          departure_airport = $4,
+          arrival_airport = $5,
+          status = $6,
+          aircraft_code = $7
+      WHERE flight_id = $8
     `;
-
-    await db(req, res, q, [status, ad, aa, flight_id]);
-
-    // Si no existía el flight_id, regresamos 404 (sin romper tu handler global)
-    // Nota: db() regresa rows de SELECT, para UPDATE no tenemos rowCount aquí.
-    // Truco: hacemos un SELECT rápido para confirmar.
-    const exists = await db(
-      req,
-      res,
-      "SELECT 1 FROM bookings.flights WHERE flight_id = $1",
-      [flight_id]
-    );
-    if (!exists[0]) return res.status(404).send("No encontrado");
-
+    await db(req, res, q, [
+      flight_no, scheduled_departure, scheduled_arrival, 
+      departure_airport, arrival_airport, status, aircraft_code, flight_id
+    ]);
     res.json({ success: true });
   } catch (e) {
-    next(e);
+    res.status(400).send(e.message);
   }
 });
 
-app.delete("/api/flights/:flight_id", async (req, res, next) => {
+// ELIMINAR VUELO
+app.delete("/api/flights/:flight_id", async (req, res) => {
   const { flight_id } = req.params;
   try {
-    await db(req, res, "DELETE FROM bookings.flights WHERE flight_id = $1", [flight_id]);
+    await db(req, res, "DELETE FROM bookings.flights WHERE flight_id = $1", [
+      flight_id,
+    ]);
     res.json({ success: true });
   } catch (e) {
-    next(e);
+    res.status(400).send(e.message);
   }
 });
 
 // ==========================================
 // ✅ SEATS (GET + PUT + DELETE)  PK compuesta
 // ==========================================
-app.get("/api/seats", async (req, res, next) => {
+// -------- SEATS (CRUD: GET + POST + DELETE) --------
+// Nota: Seats tiene llave compuesta (aircraft_code + seat_no), usualmente se borra y crea de nuevo en vez de editar.
+
+app.get("/api/seats", async (req, res) => {
   try {
     res.json(
       await db(
@@ -289,42 +305,27 @@ app.get("/api/seats", async (req, res, next) => {
       )
     );
   } catch (e) {
-    next(e);
+    res.status(500).send(e.message);
   }
 });
 
-/**
- * ✅ PUT /api/seats/:aircraft_code/:seat_no
- * Actualiza SOLO fare_conditions
- */
-app.put("/api/seats/:aircraft_code/:seat_no", async (req, res, next) => {
-  const { aircraft_code, seat_no } = req.params;
-  const { fare_conditions } = req.body;
-
+// CREAR ASIENTO
+app.post("/api/seats", async (req, res) => {
+  const { aircraft_code, seat_no, fare_conditions } = req.body;
   try {
     const q = `
-      UPDATE bookings.seats
-      SET fare_conditions = $1
-      WHERE aircraft_code = $2 AND seat_no = $3
+      INSERT INTO bookings.seats (aircraft_code, seat_no, fare_conditions)
+      VALUES ($1, $2, $3)
     `;
-    await db(req, res, q, [fare_conditions, aircraft_code, seat_no]);
-
-    // Confirmación de existencia
-    const exists = await db(
-      req,
-      res,
-      "SELECT 1 FROM bookings.seats WHERE aircraft_code = $1 AND seat_no = $2",
-      [aircraft_code, seat_no]
-    );
-    if (!exists[0]) return res.status(404).send("No encontrado");
-
+    await db(req, res, q, [aircraft_code, seat_no, fare_conditions]);
     res.json({ success: true });
   } catch (e) {
-    next(e);
+    res.status(400).send(e.message);
   }
 });
 
-app.delete("/api/seats/:aircraft_code/:seat_no", async (req, res, next) => {
+// ELIMINAR ASIENTO (PK COMPUESTA)
+app.delete("/api/seats/:aircraft_code/:seat_no", async (req, res) => {
   const { aircraft_code, seat_no } = req.params;
   try {
     await db(
@@ -335,7 +336,7 @@ app.delete("/api/seats/:aircraft_code/:seat_no", async (req, res, next) => {
     );
     res.json({ success: true });
   } catch (e) {
-    next(e);
+    res.status(400).send(e.message);
   }
 });
 

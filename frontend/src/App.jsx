@@ -189,6 +189,7 @@ export default function App() {
 
   if (!user) return <Login onLogin={setUser} onError={setError} error={error} />;
 
+
   const viewTitle = VIEW_TITLES_ES[view] || "Sistema";
 
   return (
@@ -392,7 +393,7 @@ export default function App() {
           {/* ✅ VUELOS: edición (requiere PUT en backend) */}
           {view === "flights" && (
             <CrudTable
-              title="Vuelos (Editar + Borrar)"
+              title="Gestión de Vuelos"
               endpoint="flights"
               user={user}
               onError={setError}
@@ -403,26 +404,23 @@ export default function App() {
                 "scheduled_departure",
                 "scheduled_arrival",
                 "status",
-                "actual_departure",
-                "actual_arrival",
                 "departure_airport",
                 "arrival_airport",
                 "aircraft_code",
               ]}
               pk="flight_id"
+              // AQUI AGREGAMOS LOS CAMPOS PARA EL FORMULARIO DE "NUEVO"
               formFields={[
-                { name: "flight_id", label: "ID vuelo", placeholder: "12345" },
-                { name: "status", label: "Estatus", placeholder: "Scheduled / On Time / Delayed / Departed / Arrived / Cancelled" },
-                { name: "actual_departure", label: "Salida real (ISO o vacío)", placeholder: "2026-02-04T12:30:00Z" },
-                { name: "actual_arrival", label: "Llegada real (ISO o vacío)", placeholder: "2026-02-04T14:10:00Z" },
+                { name: "flight_no", label: "No. Vuelo (6 chars)", placeholder: "PG0001" },
+                { name: "scheduled_departure", label: "Salida Programada", type: "datetime-local" },
+                { name: "scheduled_arrival", label: "Llegada Programada", type: "datetime-local" },
+                { name: "departure_airport", label: "Origen (Código)", placeholder: "DME" },
+                { name: "arrival_airport", label: "Destino (Código)", placeholder: "LED" },
+                { name: "status", label: "Estatus", placeholder: "Scheduled" },
+                { name: "aircraft_code", label: "Aeronave (Código)", placeholder: "773" },
               ]}
-              disableCreate
+              // Configuramos las URLs para editar y borrar
               buildPutUrl={(id) => `${API_URL}/flights/${encodeURIComponent(id)}`}
-              mapPutBody={(form) => ({
-                status: form.status,
-                actual_departure: emptyToNull(form.actual_departure),
-                actual_arrival: emptyToNull(form.actual_arrival),
-              })}
               buildDeleteUrl={(id) => `${API_URL}/flights/${encodeURIComponent(id)}`}
               tableLayout="wide"
             />
@@ -431,24 +429,21 @@ export default function App() {
           {/* ✅ ASIENTOS: edición (requiere PUT en backend) */}
           {view === "seats" && (
             <CrudTable
-              title="Asientos (Editar + Borrar)"
+              title="Gestión de Asientos"
               endpoint="seats"
               user={user}
               onError={setError}
               onSuccess={setSuccess}
               columns={["aircraft_code", "seat_no", "fare_conditions"]}
               pkComposite={(row) => `${row.aircraft_code}__${row.seat_no}`}
+              // AQUI AGREGAMOS LOS CAMPOS PARA CREAR ASIENTOS
               formFields={[
-                { name: "aircraft_code", label: "Código aeronave", placeholder: "320" },
-                { name: "seat_no", label: "Asiento", placeholder: "12A" },
-                { name: "fare_conditions", label: "Clase", placeholder: "Economy / Comfort / Business" },
+                { name: "aircraft_code", label: "Código aeronave", placeholder: "319" },
+                { name: "seat_no", label: "Número de Asiento", placeholder: "2A" },
+                { name: "fare_conditions", label: "Clase", placeholder: "Economy / Business" },
               ]}
-              disableCreate
-              buildPutUrl={(id) => {
-                const [aircraft_code, seat_no] = String(id).split("__");
-                return `${API_URL}/seats/${encodeURIComponent(aircraft_code)}/${encodeURIComponent(seat_no)}`;
-              }}
-              mapPutBody={(form) => ({ fare_conditions: form.fare_conditions })}
+              // Nota: Asientos usualmente no se editan (se borran y crean), así que dejamos disableEdit
+              disableEdit 
               buildDeleteUrlFromRow={(row) =>
                 `${API_URL}/seats/${encodeURIComponent(row.aircraft_code)}/${encodeURIComponent(row.seat_no)}`
               }
