@@ -1,0 +1,16 @@
+# Ignorar dependencias pesadas
+node_modules/
+*/node_modules/
+
+# Ignorar archivos de compilación
+dist/
+build/
+*/dist/
+
+# Ignorar archivos de sistema y logs
+.DS_Store
+*.log
+
+# Ignorar variables de entorno (por seguridad)
+.env
+*/.env
