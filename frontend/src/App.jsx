@@ -436,14 +436,17 @@ export default function App() {
               onSuccess={setSuccess}
               columns={["aircraft_code", "seat_no", "fare_conditions"]}
               pkComposite={(row) => `${row.aircraft_code}__${row.seat_no}`}
-              // AQUI AGREGAMOS LOS CAMPOS PARA CREAR ASIENTOS
               formFields={[
-                { name: "aircraft_code", label: "Código aeronave", placeholder: "319" },
-                { name: "seat_no", label: "Número de Asiento", placeholder: "2A" },
+                // Bloqueamos los IDs al editar
+                { name: "aircraft_code", label: "Código aeronave", placeholder: "319", disableOnEdit: true },
+                { name: "seat_no", label: "Número de Asiento", placeholder: "2A", disableOnEdit: true },
                 { name: "fare_conditions", label: "Clase", placeholder: "Economy / Business" },
               ]}
-              // Nota: Asientos usualmente no se editan (se borran y crean), así que dejamos disableEdit
-              disableEdit 
+              // CORRECCIÓN AQUÍ: Agregamos 'const' antes de la variable
+              buildPutUrl={(id) => {
+                const parts = id.split('__'); 
+                return `${API_URL}/seats/${parts[0]}/${parts[1]}`;
+              }}
               buildDeleteUrlFromRow={(row) =>
                 `${API_URL}/seats/${encodeURIComponent(row.aircraft_code)}/${encodeURIComponent(row.seat_no)}`
               }
@@ -800,7 +803,19 @@ function CrudTable({
 
   const openEdit = (row) => {
     const next = {};
-    formFields.forEach((f) => (next[f.name] = row[f.name] ?? ""));
+    formFields.forEach((f) => {
+      // Valor original
+      let val = row[f.name] ?? "";
+
+      // CORRECCIÓN: Si el campo es de fecha, lo formateamos para que el input lo lea
+      if (f.type === "datetime-local" && val) {
+        val = formatDateForInput(val);
+      }
+
+      next[f.name] = val;
+    });
+
+    // Procesar campos JSON si existen
     jsonFields.forEach((jf) => {
       if (next[jf] && typeof next[jf] === "object") next[jf] = JSON.stringify(next[jf]);
     });
@@ -1165,6 +1180,16 @@ function parseMaybeJson(v) {
     }
   }
   return v;
+}
+/** Formatea una fecha ISO (DB) a YYYY-MM-DDTHH:mm (Input HTML) */
+function formatDateForInput(isoString) {
+  if (!isoString) return "";
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return ""; // Si es inválida, retorna vacío
+  
+  // Ajuste a local: obtener componentes y rellenar con ceros
+  const pad = (n) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function emptyToNull(v) {

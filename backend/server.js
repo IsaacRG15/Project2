@@ -323,6 +323,23 @@ app.post("/api/seats", async (req, res) => {
     res.status(400).send(e.message);
   }
 });
+// EDITAR ASIENTO (Solo permite cambiar la clase)
+app.put("/api/seats/:aircraft_code/:seat_no", async (req, res) => {
+  const { aircraft_code, seat_no } = req.params;
+  const { fare_conditions } = req.body; // Solo permitimos cambiar la clase
+
+  try {
+    const q = `
+      UPDATE bookings.seats
+      SET fare_conditions = $1
+      WHERE aircraft_code = $2 AND seat_no = $3
+    `;
+    await db(req, res, q, [fare_conditions, aircraft_code, seat_no]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).send(e.message);
+  }
+});
 
 // ELIMINAR ASIENTO (PK COMPUESTA)
 app.delete("/api/seats/:aircraft_code/:seat_no", async (req, res) => {
